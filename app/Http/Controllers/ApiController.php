@@ -2,122 +2,120 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Validator;
-use Auth;
-use Arr;
-
 use App\Models\User;
+use Illuminate\Support\Arr;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
 
 class ApiController extends Controller
 {
+    /**
+     * @throws ValidationException
+     */
+    public function register(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            "name" => "required",
+            "email" => "required|email|unique:users",
+            "password" => "required|min:8"
+        ]);
 
-  /**
-  * Get User by the token
-  * @param Request $request
-  * @return boolen $result
-  */
-  public function checkAdmin(Request $request)
-  {
-    $user = $request->user();
-    if ($user->tokenCan('admin')) {
-      return response()->json([
-        'status' => 200,
-        'message' => $user->name." is an Admin"
-      ],200);
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => "Bad Request",
+                'errors' => $validator->errors()
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return $this->registerUser($validator->validated());
     }
-    return response()->json([
-      'status' => 401,
-      'message' => "Unauthorized"
-    ],401);
-  }
 
-  /**
-  * Get User by the token
-  * @param Request $request
-  * @return boolen $result
-  */
-  public function logout(Request $request)
-  {
-    $user = $request->user();
-    $user->currentAccessToken()->delete();
-    return response()->json([
-      'status' => 200,
-      'message' => "User logout"
-    ],200);
-  }
+    /**
+     * @throws ValidationException
+     */
+    public function login(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            "email" => "required|email",
+            "password" => "required"
+        ]);
 
-  /**
-  * Get User by the token
-  * @param Request $request
-  * @return User $user
-  */
-  public function getUser(Request $request)
-  {
-    return response()->json([
-      'status' => 200,
-      'user'=>$request->user()
-    ]);
-  }
+        if ($validator->fails()) {
+            return response()->json([
+                'message' => "Bad Request",
+                'errors' => $validator->errors()
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
 
-  /**
-  * Login user
-  * @param Request $request
-  * @return User $user with token
-  */
-  public function login(Request $request)
-  {
-    $validator = Validator::make($request->all(),[
-      "email" => "required|email",
-      "password" => "required"
-    ]);
-    if($validator->fails()){
-      return response()->json([
-        'status' => 400,
-        'message' => "Bad Request"
-      ],400);
+        if (! Auth::attempt($request->only('email', 'password'))) {
+            return response()->json([
+                'message' => "Unauthorized"
+            ], Response::HTTP_UNAUTHORIZED);
+        }
+
+        return $this->authenticateUser($validator->validated());
     }
-    if(!Auth::attempt($request->only('email','password'))){
-      return response()->json([
-        'status' => 401,
-        'message' => "Unauthorized"
-      ],401);
+
+    public function logout(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $user->currentAccessToken()->delete();
+
+        return response()->json(['message' => "User logged out!"], Response::HTTP_OK);
     }
-    $user = User::where("email",$request->email)->select('id','name','email','roles')->first();
-    $token = $user->createToken('user-token',$user->roles)->plainTextToken;
-    Arr::add($user,'token',$token);
-    return response()->json($user);
-  }
 
+    public function checkAdmin(Request $request): JsonResponse
+    {
+        $user = $request->user();
 
-  /**
-  * Register user
-  * @param Request $request
-  * @return Bolean $result
-  */
-  public function register(Request $request)
-  {
-    $validator = Validator::make($request->all(),[
-      "name" => "required",
-      "email" => "required|email",
-      "password" => "required|min:8"
-    ]);
-    if($validator->fails()){
-      return response()->json([
-        'status' => 400,
-        'message' => "Bad Request"
-      ],400);
+        if ($user->tokenCan('admin')) {
+            return response()->json([
+                'message' => $user->name . " is an Admin"
+            ], Response::HTTP_OK);
+        }
+
+        return response()->json([
+            'message' => "Unauthorized"
+        ], Response::HTTP_UNAUTHORIZED);
     }
-    $user = new User();
-    $user->name = $request->name;
-    $user->email = $request->email;
-    $user->password = bcrypt($request->password);
-    $user->roles = ['user'];
-    $user->save();
-    return response()->json([
-      'status' => 200,
-      'message' => "User registered"
-    ],200);
-  }
 
+    public function getUser(Request $request): JsonResponse
+    {
+        return response()->json([
+            'user' => $request->user()
+        ], Response::HTTP_OK);
+    }
+
+    protected function registerUser(array $fields): JsonResponse
+    {
+        $user = new User();
+        $user->name = $fields['name'];
+        $user->email = $fields['email'];
+        $user->password = bcrypt($fields['password']);
+        $user->roles = ['user'];
+        $user->save();
+
+        return response()->json([
+            'message' => "User registered",
+        ], Response::HTTP_CREATED);
+    }
+
+    protected function authenticateUser(array $fields): JsonResponse
+    {
+        $user = User::query()
+            ->whereEmail($fields['email'])
+            ->select('id', 'name', 'email', 'roles')
+            ->first();
+
+        $token = $user->createToken('user-token', $user->roles)->plainTextToken;
+
+        Arr::add($user, 'token', $token);
+
+        return response()->json($user, Response::HTTP_OK);
+    }
 }
